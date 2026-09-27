@@ -1,0 +1,300 @@
+// ADM0VE AI — Prisma schema
+// Note: SQLite is used as the database engine for local development.
+// Geographic data (lat/long) is stored as Float; PostGIS-style queries
+// are computed in the application layer.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("EMPLOYEE") // ADMIN | MANAGER | EMPLOYEE
+  companyId    String?
+  managerId    String?  // for EMPLOYEE: their manager's userId
+  active       Boolean  @default(true)
+  jobTitle     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  company      Company?     @relation(fields: [companyId], references: [id])
+  manager      User?        @relation("ManagerTeam", fields: [managerId], references: [id])
+  teamMembers  User[]       @relation("ManagerTeam")
+  tasksAssigned Task[]      @relation("TaskAssignee")
+  tasksCreated  Task[]      @relation("TaskCreator")
+  taskComments  TaskComment[]
+  notifications Notification[]
+  activityLogs  ActivityLog[]
+}
+
+model Company {
+  id        String   @id @default(cuid())
+  name      String
+  industry  String
+  address   String
+  city      String
+  country   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users     User[]
+  vehicles  Vehicle[]
+  campaigns Campaign[]
+}
+
+model Vehicle {
+  id                 String   @id @default(cuid())
+  companyId          String
+  name               String
+  plateNumber        String
+  vehicleType        String // TRUCK | VAN | CAR | BUS | SCOOTER
+  status             String   @default("ACTIVE") // ACTIVE | IDLE | MAINTENANCE
+  currentLatitude    Float
+  currentLongitude   Float
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  company     Company          @relation(fields: [companyId], references: [id])
+  gpsPoints   GpsPoint[]
+  campaigns   CampaignVehicle[]
+  exposures   ExposureRecord[]
+
+  @@index([companyId])
+}
+
+model Campaign {
+  id            String   @id @default(cuid())
+  companyId     String
+  name          String
+  description   String?
+  product       String
+  targetAudience String
+  startDate     DateTime
+  endDate       DateTime
+  budget        Float
+  status        String   @default("PLANNED") // PLANNED | ACTIVE | COMPLETED | PAUSED
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  company        Company            @relation(fields: [companyId], references: [id])
+  vehicles       CampaignVehicle[]
+  gpsPoints      GpsPoint[]
+  exposures      ExposureRecord[]
+  predictions    Prediction[]
+  recommendations Recommendation[]
+  tasks          Task[]
+
+  @@index([companyId])
+  @@index([status])
+}
+
+model CampaignVehicle {
+  id         String @id @default(cuid())
+  campaignId String
+  vehicleId  String
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  vehicle  Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, vehicleId])
+}
+
+model GpsPoint {
+  id                        String   @id @default(cuid())
+  vehicleId                 String
+  campaignId                String?
+  latitude                  Float
+  longitude                 Float
+  timestamp                 DateTime
+  speed                     Float    @default(0)
+  distanceFromPreviousPoint Float    @default(0)
+
+  vehicle  Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  campaign Campaign? @relation(fields: [campaignId], references: [id])
+
+  @@index([vehicleId])
+  @@index([campaignId])
+  @@index([timestamp])
+}
+
+model Zone {
+  id                  String   @id @default(cuid())
+  name                String
+  city                String
+  latitude            Float
+  longitude           Float
+  radius              Float    @default(500) // meters
+  category            String   // COMMERCIAL | RESIDENTIAL | BUSINESS | TOURIST | INDUSTRIAL | MIXED
+  estimatedTraffic    Int      @default(50) // 0-100 index
+  estimatedFrequentation Int  @default(50) // 0-100 index
+  createdAt           DateTime @default(now())
+
+  trafficData       TrafficData[]
+  exposures         ExposureRecord[]
+  predictions       Prediction[]
+  recommendations   Recommendation[]
+
+  @@index([city])
+  @@index([category])
+}
+
+model TrafficData {
+  id             String   @id @default(cuid())
+  zoneId         String
+  date           DateTime
+  hour           Int      // 0-23
+  trafficIndex   Int      // 0-100
+  pedestrianIndex Int     // 0-100
+  vehicleIndex   Int      // 0-100
+
+  zone Zone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+
+  @@index([zoneId])
+  @@index([date])
+}
+
+model ExposureRecord {
+  id                 String   @id @default(cuid())
+  campaignId         String
+  vehicleId          String
+  zoneId             String
+  date               DateTime
+  hour               Int
+  estimatedExposure  Int      // raw estimated audience reach
+  exposureScore      Float    // 0-100 normalized potential exposure score
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  vehicle  Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  zone     Zone     @relation(fields: [zoneId], references: [id])
+
+  @@index([campaignId])
+  @@index([zoneId])
+  @@index([date])
+}
+
+model Prediction {
+  id             String   @id @default(cuid())
+  campaignId     String?
+  zoneId         String
+  predictionDate DateTime
+  hour           Int
+  predictedScore Float
+  confidence     Float
+  modelVersion   String
+  createdAt      DateTime @default(now())
+
+  campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  zone     Zone     @relation(fields: [zoneId], references: [id])
+
+  @@index([zoneId])
+  @@index([campaignId])
+}
+
+model Recommendation {
+  id              String   @id @default(cuid())
+  campaignId      String
+  zoneId          String
+  recommendedHour Int
+  score           Float
+  reason          String
+  priority        Int      // 1 = highest
+  createdAt       DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  zone     Zone     @relation(fields: [zoneId], references: [id])
+
+  @@index([campaignId])
+  @@index([priority])
+}
+
+model ModelVersion {
+  id          String   @id @default(cuid())
+  name        String
+  version     String
+  algorithm   String
+  mae         Float
+  rmse        Float
+  r2          Float
+  trainedAt   DateTime @default(now())
+  datasetSize Int
+  features    String   // JSON-serialized list of feature names
+  isCurrent   Boolean  @default(false)
+}
+
+model Task {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  status      String    @default("TODO") // TODO | IN_PROGRESS | COMPLETED | CANCELLED
+  priority    String    @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
+  assignedToId String?
+  assignedById String?
+  campaignId  String?
+  dueDate     DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  assignedTo User?     @relation("TaskAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  assignedBy User?     @relation("TaskCreator", fields: [assignedById], references: [id], onDelete: SetNull)
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  comments   TaskComment[]
+
+  @@index([assignedToId])
+  @@index([assignedById])
+  @@index([campaignId])
+  @@index([status])
+  @@index([priority])
+}
+
+model TaskComment {
+  id        String   @id @default(cuid())
+  taskId    String
+  userId    String
+  content   String
+  createdAt DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  type      String   @default("INFO") // INFO | TASK | SYSTEM | CAMPAIGN
+  read      Boolean  @default(false)
+  link      String?  // optional view key to navigate to
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([read])
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String   // e.g. "LOGIN", "CREATE_CAMPAIGN", "UPDATE_TASK"
+  entity    String?  // e.g. "campaign", "task"
+  entityId  String?
+  details   String?  // JSON string with extra info
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+}
